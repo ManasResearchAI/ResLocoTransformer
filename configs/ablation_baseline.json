@@ -55,7 +55,7 @@
             "use_flat_orientation": true,
             "use_gait_phase": true,
             "use_symmetry": true,
-            "use_feet_gait": true
+            "use_feet_gait": false
         }
     },
     "replay_buffer": {

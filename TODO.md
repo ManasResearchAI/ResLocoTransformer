@@ -2,6 +2,72 @@
 ## Ablations
 Ablations are meant to be experiments that justify each and every architectural choice so that one can conretely say why a certain choice was made. The current approach is a more "reward focused" approach where we have adapted a particular reward function and weights to ensure a natural gait. Config present in `configs/go2_natural_gait_tf.json`. Ablations are basically there to justify why this method and how it compares against other methods.
 
+### Full rough-terrain baseline (2000 epochs) — E003
+
+Launched 2026-08-29 22:35 via `./run_baseline_rough_2000.sh`, which starts it in
+a detached tmux session `baseline2000` (survives closing the terminal, and can be
+attached to live).
+
+- Config `configs/baseline_rough_2000.json` = `configs/ablation_baseline.json`
+  with `num_epochs: 500 -> 2000` and `save_interval: 50 -> 100`. Every other key
+  is byte-identical, so epochs 0-500 remain comparable to the ablation matrix.
+- `scene_rough.xml`, depth camera on, AttnRes 2x `[4, 128]`, `attn_res_heads: 4`,
+  `--vec_env_nums 16 --proc_nums 16`, seed 0, GPU 0 (RTX 3070).
+- Tier-1 before launch: 2-epoch smoke run on the same config in scratch, rc=0,
+  66 s and 71 s per epoch, `Running_Average_Rewards` 529.5 / 526.4, all 40
+  `reward/*` and `diag/*` columns written to `log.csv`, checkpoints saved.
+- Budget: ~70 s/epoch x 2000 = ~39 h.
+- Attach: `tmux attach -t baseline2000` (detach with `Ctrl-b d`).
+  Watch: `tail -f log_baseline2000/baseline_rough_2000.out`.
+  Stop: `tmux kill-session -t baseline2000`.
+- [ ] On completion: `scripts/compare_experiments.py --log-dir ./log_baseline2000`,
+      replay `model_pf_best.pth` with `scripts/play.py`, write up as E003 in
+      `report.tex`.
+
+### `use_feet_gait` reward was never added to the total
+
+- [x] Fixed in `envs/mujoco_env.py` (uncommitted at the time of the E003 launch):
+      `r_feet_gait` was computed and logged but omitted from `total`, and
+      `_compute_feet_gait_reward` recomputed foot contacts instead of reusing the
+      ones already gathered. Verified by `scripts/verify_feet_gait.py`
+      (`total(on) - total(off) == feet_gait`, PASS).
+- All shipped configs currently set `use_feet_gait: false` (it overlaps
+      `use_gait_phase`), so no completed run is affected by the bug.
+
+### Replaying pre-gait-phase checkpoints (84-dim state)
+
+`STATE_DIM` went 84 -> 86 when the 2-dim gait phase `[sin, cos]` was appended to
+the END of the state block (`envs/mujoco_env.py:57,59,525`). Checkpoints trained
+before that (`log_gait/natural_gait_tf-summer`, `log_gait/natural_gait_mlp`,
+`log/go2_natural_gait_tf`, `log/ablation_attnres`) expect 84; everything under
+`log_ablation/` expects 86.
+
+- [x] `scripts/play.py` crashed on the transformer path for 84-dim checkpoints:
+      it built the encoder at the env's `state_dim` and `load_state_dict` raised
+      `size mismatch for encoder.base.seq_fcs.0.weight: [256, 84] vs [256, 86]`.
+      Fixed by reading the checkpoint's own state dim off its first linear layer
+      (`encoder.base.seq_fcs.0.weight`, or `base.seq_fcs.0.weight` for MLP),
+      building the policy at that dim, and indexing the observation as
+      `state[:ckpt_dim] ++ depth[env_state_dim:]`.
+- The old MLP-only workaround (slice the first N dims of the whole observation)
+      was correct only because a state-only obs has no image after it; on a
+      transformer it would have silently dropped all 16384 depth dims. Replaced.
+- Verified: `natural_gait_tf-summer` 3686.3 +/- 11.5, `natural_gait_mlp` 4196.5
+      +/- 14.1, `ablation_baseline` 3940.0 +/- 98.4, `ablation_visual_pool` 5062,
+      `ablation_stateonly` 4519 -- all 1000-step episodes, no falls. 86-dim
+      checkpoints print no compatibility note.
+
+- [x] `envs/builder.py:50` hard-coded `NormObsWithImg.state_shape = 84`. It was
+      right only by luck: the gait phase is appended last, so the literal 84
+      happened to still mean "proprio block". Now derived as
+      `STATE_DIM - GAIT_PHASE_DIM`. Behaviour is unchanged by construction --
+      the gait phase and depth still pass through unnormalised, and the three
+      replay rewards above are bit-identical before and after the change, so
+      the in-flight 2000-epoch run and every completed run stay comparable.
+- Added `UnitreeMujocoGymEnv.proprio_dim` (84) alongside `state_dim` (86) and
+      corrected the stale `(84)` docstrings on `state_dim` and
+      `_build_observation`.
+
 ### Architecture Ablations
 
 **Six arms, three seeds each (0, 1, 2) — 18 arm-seeds.** Every arm uses the same

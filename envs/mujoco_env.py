@@ -438,8 +438,13 @@ class UnitreeMujocoGymEnv(gym.Env):
 
     @property
     def state_dim(self) -> int:
-        """Dimension of the proprioceptive state vector (84)."""
+        """Full state vector: proprioceptive history + gait phase (86)."""
         return STATE_DIM
+
+    @property
+    def proprio_dim(self) -> int:
+        """Proprioceptive block only, excluding the trailing gait phase (84)."""
+        return STATE_DIM - GAIT_PHASE_DIM
 
     # ------------------------------------------------------------------
     # Internal observation helpers
@@ -515,8 +520,13 @@ class UnitreeMujocoGymEnv(gym.Env):
     def _build_observation(self) -> np.ndarray:
         """
         Concatenate history buffers into the flat observation vector.
-        With get_image=True:  [state(84) | depth_flat(16384)]
-        With get_image=False: [state(84)]
+        With get_image=True:  [state(86) | depth_flat(16384)]
+        With get_image=False: [state(86)]
+
+        state is [imu_hist(12) | joint_hist(36) | act_hist(36) | gait_phase(2)].
+        The gait phase is appended LAST: anything that reconciles an older
+        84-dim checkpoint against this layout must drop the trailing 2 dims,
+        not reindex the block (see scripts/play.py).
         """
         imu_hist   = np.concatenate(list(self._imu_hist),    axis=0)
         joint_hist = np.concatenate(list(self._joint_hist),  axis=0)
@@ -585,13 +595,12 @@ class UnitreeMujocoGymEnv(gym.Env):
         self._feet_contact_last = contacts.copy()
         return reward
 
-    def _compute_feet_gait_reward(self) -> float:
+    def _compute_feet_gait_reward(self, contacts: np.ndarray) -> float:
         """
         Reward agreement between expected stance phase
         and actual foot contact.
         """
 
-        contacts = self._get_foot_contacts()
         elapsed_time = (self._step_count * self.num_action_repeat * self.sim_dt)
 
         global_phase = ((elapsed_time % self.gait_period) / self.gait_period)
@@ -754,7 +763,7 @@ class UnitreeMujocoGymEnv(gym.Env):
         # --- optional feet gait reward ---
         r_feet_gait = 0.0
         if self.use_feet_gait:
-            r_feet_gait = self._compute_feet_gait_reward()
+            r_feet_gait = self._compute_feet_gait_reward(contacts)
 
         # Base terms always active. Optional terms gated by flags.
         total = r_vel + r_ang_vel + r_alive + r_standstill
@@ -772,6 +781,7 @@ class UnitreeMujocoGymEnv(gym.Env):
         if self.use_flat_orientation: total += r_flat_orientation
         if self.use_gait_phase:     total += r_gait_phase
         if self.use_symmetry:       total += r_symmetry
+        if self.use_feet_gait:      total += r_feet_gait
 
         terms = {
             "reward/forward_vel":   r_vel,

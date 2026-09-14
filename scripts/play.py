@@ -56,7 +56,10 @@ def get_play_args():
     parser.add_argument("--log_dir", type=str, default="./log",
                         help="Log root used during training (default: ./log)")
     parser.add_argument("--seed", type=int, default=0,
-                        help="Seed used during training (selects the run directory)")
+                        help="Seed for the evaluation rollout (initial-state randomisation)")
+    parser.add_argument("--stochastic", action="store_true", default=False,
+                        help="Sample actions from the policy distribution instead of "
+                             "using the deterministic mean (default: deterministic)")
     parser.add_argument("--id", type=str, default=None,
                         help="Experiment ID override (same as used in train.py)")
     parser.add_argument("--episodes", type=int, default=5,
@@ -83,14 +86,7 @@ def _resolve_pf_path(args, params):
     if args.pf_path is not None:
         return osp.abspath(args.pf_path), osp.dirname(osp.abspath(args.pf_path))
 
-    experiment_name = (
-        os.path.split(os.path.splitext(args.config)[0])[-1]
-        if args.id is None
-        else args.id
-    )
-    model_dir = osp.join(
-        args.log_dir, "model"
-    )
+    model_dir = osp.join(args.log_dir, "model")
     pf_path = osp.join(model_dir, f"model_pf_{args.checkpoint}.pth")
     return pf_path, model_dir
 
@@ -108,6 +104,11 @@ def _infer_ckpt_id(pf_path):
 def play(args):
     params = get_params(args.config)
     device = torch.device(f"cuda:{args.device}" if args.cuda else "cpu")
+
+    # The env randomises the initial pose through the global numpy RNG, so
+    # seeding here is what actually makes a rollout reproducible.
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     # ------------------------------------------------------------------
     # Resolve checkpoint paths
@@ -167,24 +168,49 @@ def play(args):
     params["net"]["base_type"] = networks.MLPBase
 
     _use_mlp = args.use_mlp or params.get("policy_type", "") == "mlp"
-    obs_slice = None  # set below if checkpoint expects fewer dims than env
+
+    # ------------------------------------------------------------------
+    # Reconcile the checkpoint's state dim with the env's.
+    #
+    # STATE_DIM grew from 84 to 86 when the 2-dim gait phase [sin, cos] was
+    # appended to the end of the state block (envs/mujoco_env.py:59,525), so
+    # checkpoints trained before that expect 84. The observation vector is
+    # [state | depth], and the nets split it at state_input_shape
+    # (torchrl/networks/nets.py:249,365), so an older checkpoint replays
+    # correctly as long as we (a) build it at ITS state dim and (b) drop the
+    # two trailing state dims while keeping the whole depth block. Slicing the
+    # first N dims of the full observation would work for the state-only MLP
+    # but would throw away the depth image on the transformer path.
+    # ------------------------------------------------------------------
+    env_obs_dim   = env.unwrapped.observation_space.shape[0]
+    env_state_dim = env.unwrapped.state_dim
+
+    _first_fc = "base.seq_fcs.0.weight" if _use_mlp else "encoder.base.seq_fcs.0.weight"
+    ckpt_state_dim = ckpt_sd[_first_fc].shape[1] if _first_fc in ckpt_sd else env_state_dim
+
+    obs_index = None  # set below if the checkpoint predates the current state dim
+    if ckpt_state_dim != env_state_dim:
+        if ckpt_state_dim > env_state_dim:
+            raise SystemExit(
+                f"Checkpoint expects a {ckpt_state_dim}-dim state but the env only "
+                f"provides {env_state_dim}. This checkpoint is from an incompatible "
+                f"env version and cannot be replayed."
+            )
+        dropped = env_state_dim - ckpt_state_dim
+        obs_index = np.concatenate([
+            np.arange(0, ckpt_state_dim),          # state the checkpoint knows
+            np.arange(env_state_dim, env_obs_dim),  # full depth block, untouched
+        ])
+        print(f"  NOTE: checkpoint predates the current observation layout "
+              f"(state {ckpt_state_dim} vs env {env_state_dim}). Dropping the last "
+              f"{dropped} state dim(s) and keeping the "
+              f"{env_obs_dim - env_state_dim}-dim depth block.")
+
+    state_dim = ckpt_state_dim
 
     if _use_mlp:
         # Simple MLP policy — no encoder, no transformer, state-only
-        env_obs_dim = env.unwrapped.observation_space.shape[0]
-
-        # Detect checkpoint input dim from first linear layer
-        ckpt_obs_dim = env_obs_dim
-        if "base.seq_fcs.0.weight" in ckpt_sd:
-            ckpt_obs_dim = ckpt_sd["base.seq_fcs.0.weight"].shape[1]
-
-        if ckpt_obs_dim != env_obs_dim:
-            print(f"  NOTE: checkpoint expects {ckpt_obs_dim}-dim input, "
-                  f"env provides {env_obs_dim}-dim. "
-                  f"Will slice observations to first {ckpt_obs_dim} dims.")
-            obs_slice = slice(0, ckpt_obs_dim)
-
-        obs_dim = ckpt_obs_dim
+        obs_dim = state_dim
         pf = policies.GaussianContPolicyBasicBias(
             input_shape=obs_dim,
             output_shape=env.action_space.shape[0],
@@ -199,7 +225,7 @@ def play(args):
     else:
         encoder = networks.LocoTransformerEncoder(
             in_channels=4,
-            state_input_dim=env.unwrapped.state_dim,
+            state_input_dim=state_dim,
             **params["encoder"],
         )
         encoder_vf = copy.deepcopy(encoder)
@@ -209,7 +235,7 @@ def play(args):
         if _use_attn_res:
             pf = policies.GaussianContPolicyLocoAttnResTransformer(
                 encoder=encoder,
-                state_input_shape=env.unwrapped.state_dim,
+                state_input_shape=state_dim,
                 visual_input_shape=(4, 64, 64),
                 output_shape=env.action_space.shape[0],
                 **params["net"],
@@ -217,7 +243,7 @@ def play(args):
             )
             vf = networks.LocoAttnResTransformer(
                 encoder=encoder_vf,
-                state_input_shape=env.unwrapped.state_dim,
+                state_input_shape=state_dim,
                 visual_input_shape=(4, 64, 64),
                 output_shape=1,
                 **params["net"],
@@ -225,7 +251,7 @@ def play(args):
         else:
             pf = policies.GaussianContPolicyLocoTransformer(
                 encoder=encoder,
-                state_input_shape=env.unwrapped.state_dim,
+                state_input_shape=state_dim,
                 visual_input_shape=(4, 64, 64),
                 output_shape=env.action_space.shape[0],
                 **params["net"],
@@ -233,7 +259,7 @@ def play(args):
             )
             vf = networks.LocoTransformer(
                 encoder=encoder_vf,
-                state_input_shape=env.unwrapped.state_dim,
+                state_input_shape=state_dim,
                 visual_input_shape=(4, 64, 64),
                 output_shape=1,
                 **params["net"],
@@ -266,11 +292,15 @@ def play(args):
         while not done:
             step_start = time.monotonic()
 
-            ob = obs[obs_slice] if obs_slice is not None else obs
+            ob = obs[obs_index] if obs_index is not None else obs
             ob_tensor = torch.tensor(ob, dtype=torch.float32).unsqueeze(0).to(device)
             with torch.no_grad():
-                out = pf.explore(ob_tensor)
-                act = out["action"].squeeze(0).cpu().numpy()
+                if args.stochastic:
+                    act = pf.explore(ob_tensor)["action"].squeeze(0).cpu().numpy()
+                else:
+                    # Deterministic mean action — what the policy actually
+                    # converged to; explore() adds Gaussian noise on top.
+                    act = np.asarray(pf.eval_act(ob_tensor))
 
             obs, reward, terminated, truncated, _ = env.step(act)
             done = bool(terminated) or bool(truncated)

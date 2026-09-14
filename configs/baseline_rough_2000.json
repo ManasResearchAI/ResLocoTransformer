@@ -1,0 +1,115 @@
+{
+    "env_name": "UnitreeMujocoGymEnv",
+    "env": {
+        "reward_scale": 1,
+        "obs_norm": true,
+        "horizon": 1000,
+        "env_build": {
+            "scene_path": "robot/go2/scene_rough.xml",
+            "get_image": true,
+            "Kp": 40.0,
+            "Kd": 0.5,
+            "num_action_repeat": 10,
+            "sim_dt": 0.001,
+            "target_vel": 0.3,
+            "alive_reward": 0.0,
+            "fall_reward": -5.0,
+            "max_episode_steps": 1000,
+            "depth_norm": true,
+            "enable_rendering": false,
+            "target_angular_vel": 0.0,
+            "vel_tracking_weight": 5.0,
+            "vel_sigma": 0.25,
+            "angular_vel_weight": 0.2,
+            "angular_vel_sigma": 0.25,
+            "torque_weight": 0.0005,
+            "action_rate_weight": 0.001,
+            "orientation_weight": 2.0,
+            "height_weight": 30.0,
+            "target_height": 0.29,
+            "lat_yaw_weight": 0.3,
+            "z_vel_weight": 0.5,
+            "ang_vel_xy_weight": 0.1,
+            "feet_air_time_weight": 2.0,
+            "feet_air_time_target": 0.1,
+            "foot_slip_weight": 0.5,
+            "foot_clearance_weight": 1.0,
+            "foot_clearance_target": 0.04,
+            "pitch_rate_weight": 0.5,
+            "flat_orientation_weight": 0.5,
+            "gait_freq": 2.0,
+            "gait_duty_factor": 0.5,
+            "gait_phase_weight": 1.5,
+            "symmetry_weight": 0.2,
+            "use_torque": true,
+            "use_action_rate": true,
+            "use_orientation": true,
+            "use_height": true,
+            "use_lat_yaw": true,
+            "use_z_vel": true,
+            "use_ang_vel_xy": true,
+            "use_feet_air_time": true,
+            "use_foot_slip": true,
+            "use_foot_clearance": true,
+            "use_pitch_rate": true,
+            "use_flat_orientation": true,
+            "use_gait_phase": true,
+            "use_symmetry": true,
+            "use_feet_gait": false
+        }
+    },
+    "replay_buffer": {
+        "size": 16384,
+        "time_limit_filter": true
+    },
+    "policy": {},
+    "encoder": {
+        "hidden_shapes": [
+            256,
+            256
+        ],
+        "token_dim": 64,
+        "two_by_two": false
+    },
+    "net": {
+        "transformer_params": [
+            [
+                4,
+                128
+            ],
+            [
+                4,
+                128
+            ]
+        ],
+        "append_hidden_shapes": [
+            256,
+            256
+        ],
+        "attn_res_heads": 4,
+        "token_norm": true,
+        "max_pool": false
+    },
+    "collector": {
+        "epoch_frames": 16384,
+        "max_episode_frames": 999,
+        "eval_episodes": 1
+    },
+    "general_setting": {
+        "discount": 0.99,
+        "num_epochs": 2000,
+        "batch_size": 4096,
+        "gae": true,
+        "save_interval": 100,
+        "eval_interval": 10
+    },
+    "ppo": {
+        "plr": 0.0003,
+        "vlr": 0.0003,
+        "clip_para": 0.2,
+        "opt_epochs": 10,
+        "tau": 0.95,
+        "shuffle": true,
+        "entropy_coeff": 0.005
+    }
+}

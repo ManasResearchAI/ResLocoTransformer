@@ -41,13 +41,30 @@ TIMELIMIT_DICT = {
 # ---------------------------------------------------------------------------
 
 class NormObsWithImg(gym.ObservationWrapper, BaseWrapper):
-    """Normalises only the state portion of [state | image] observations."""
+    """
+    Normalises only the proprioceptive portion of the observation.
+
+    The observation is ``[proprio | gait_phase | image]``. Running mean/var is
+    applied to the proprioceptive block only; the 2-dim gait phase
+    ``[sin(phi), cos(phi)]`` and the depth block pass through untouched --
+    the phase is already bounded in [-1, 1] and carries a fixed scale that
+    whitening by running statistics would destroy.
+
+    The split point is derived from the env constants rather than hard-coded,
+    so it stays correct when STATE_DIM changes. (It was previously a literal
+    84, which silently became "proprio only" when the gait phase pushed
+    STATE_DIM to 86 -- right by luck, since the phase is appended last.)
+    """
 
     def __init__(self, env, epsilon=1e-4, clipob=10.0):
         super().__init__(env)
+        # Imported lazily, matching build_unitree_mujoco_env: keeps mujoco off
+        # the import path until an env is actually constructed.
+        from envs.mujoco_env import STATE_DIM, GAIT_PHASE_DIM
+
         self.training = True
         self.clipob = clipob
-        self.state_shape = 84
+        self.state_shape = STATE_DIM - GAIT_PHASE_DIM
         self._obs_normalizer = Normalizer((self.state_shape,))
 
     def observation(self, observation):
