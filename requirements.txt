@@ -16,7 +16,7 @@ tabulate>=0.9.0        # Pretty-print training stats in terminal
 toolz>=0.12.0          # dicttoolz.merge_with used in VecEnv / SubProcVecEnv
 posix_ipc>=1.1.0       # Shared-memory replay buffer (Linux only)
 torch==2.11.0
-opencv-python==4.13.0.92
+opencv-python==5.0.0.93
 # ── Optional: plotting & log analysis ───────────────────────────────────────
 matplotlib>=3.5.0
 seaborn>=0.12.0
