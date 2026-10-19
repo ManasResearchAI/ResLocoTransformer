@@ -14,7 +14,7 @@ mujoco>=3.0.0          # MuJoCo Python bindings (DeepMind)
 tensorboardX>=2.6.0    # Training logger (TensorBoard-compatible)
 tabulate>=0.9.0        # Pretty-print training stats in terminal
 toolz>=0.12.0          # dicttoolz.merge_with used in VecEnv / SubProcVecEnv
-posix_ipc>=1.1.0       # Shared-memory replay buffer (Linux only)
+posix_ipc>=1.3.2       # Shared-memory replay buffer (Linux only)
 torch==2.11.0
 opencv-python==4.13.0.92
 # ── Optional: plotting & log analysis ───────────────────────────────────────
