@@ -8,7 +8,7 @@
 #   pip install torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
 
 # ── Core (required for training) ────────────────────────────────────────────
-numpy>=1.21.0
+numpy>=2.2.6
 gym>=0.21.0
 mujoco>=3.0.0          # MuJoCo Python bindings (DeepMind)
 tensorboardX>=2.6.0    # Training logger (TensorBoard-compatible)
